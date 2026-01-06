@@ -1,38 +1,52 @@
-import express from 'express';
-import cors from 'cors';
-import inventoryRoutes from './routes/inventory.js';
-import userRoutes from './routes/users.js';
-import soldRoutes from './routes/sold.js';
-import { errorHandler, notFound } from './middleware/error.js';
-import dotenv from 'dotenv';
-import connectDB from "./database.js";
+import express from "express";
+import dotenv from "dotenv";
+import cors from "cors";
+import connectDB from "./config/db.js";
+import authRoutes from "./routes/auth.js";
+import process from "process";
+import dashboardRoutes from "./routes/dashboard.js";
+import categoryRoutes from "./routes/categories.js";
+import inventoryRoutes from "./routes/inventory.js";
+import soldRoutes from "./routes/sold.js";
+import userRoutes from "./routes/user.js";
+import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 
-// dotenv.config();
-
-// console.log("🧪 ENV CHECK:", {
-//   DB_TYPE: process.env.DB_TYPE,
-//   MONGO_URI: process.env.MONGO_URI,
-// });
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
+dotenv.config();
 connectDB();
 
-app.use('/api/inventory', inventoryRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/sold', soldRoutes);
+const app = express();
 
-app.get("/", (req, res) => {
-  res.json({ message: "Backend is running 🚀" });
-});
+/**
+ * ✅ CORS CONFIG (important)
+ */
+app.use(
+  cors({
+    origin: ["http://localhost:8080", "http://localhost:5173"],
+    credentials: true,
+  })
+);
 
+/**
+ * ✅ Body parsers
+ */
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
+/**
+ * ✅ Routes
+ */
+app.use("/api/auth", authRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/categories", categoryRoutes);
+app.use("/api/inventory", inventoryRoutes);
+app.use("/api/sold", soldRoutes);
+app.use("/api/users", userRoutes);
+
+/**
+ * ✅ Error handling
+ */
 app.use(notFound);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

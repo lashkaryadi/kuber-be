@@ -1,15 +1,25 @@
-import db from '../database.js';
+// import mongoose from "mongoose";
 
-export function getAll() {
-  return db.prepare('SELECT id, username, role, createdAt FROM users').all();
-}
+// const userSchema = new mongoose.Schema(
+//   {
+//     username: {
+//       type: String,
+//       required: true,
+//       unique: true,
+//       trim: true
+//     },
+//     password: {
+//       type: String,
+//       required: true
+//     },
+//     role: {
+//       type: String,
+//       enum: ["admin", "staff"],
+//       default: "staff"
+//     }
+//   },
+//   { timestamps: true }
+// );
 
-export function getById(id) {
-  return db.prepare('SELECT id, username, role, createdAt FROM users WHERE id = ?').get(id);
-}
+// export default mongoose.model("User", userSchema);
 
-export function create(user) {
-  const stmt = db.prepare(`INSERT INTO users (username, password, role) VALUES (?, ?, ?)`);
-  const info = stmt.run(user.username, user.password, user.role);
-  return { id: info.lastInsertRowid, ...user };
-}

@@ -1,8 +1,8 @@
-import Database from 'better-sqlite3';
-const db = new Database('gemstone-inventory.db');
 import mongoose from "mongoose";
 import dotenv from 'dotenv';
+import process from 'process';
 dotenv.config();
+
 
 const connectDB = async () => { 
   console.log("  ENV CHECK:", {
