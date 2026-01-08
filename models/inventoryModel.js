@@ -39,7 +39,8 @@
 
 
 import mongoose from "mongoose";
-
+import Sold from "./soldModel.js";
+import Invoice from "./Invoice.js";
 const inventorySchema = new mongoose.Schema(
   {
     serialNumber: {
@@ -119,5 +120,21 @@ inventorySchema.set("toJSON", {
     delete ret.__v;
   },
 });
+
+inventorySchema.pre("deleteOne", { document: true }, async function (next) {
+  try {
+    const sold = await Sold.findOne({ inventoryItem: this._id });
+
+    if (sold) {
+      await Invoice.findOneAndDelete({ soldItem: sold._id });
+      await sold.deleteOne();
+    }
+
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 
 export default mongoose.model("Inventory", inventorySchema);

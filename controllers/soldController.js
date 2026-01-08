@@ -42,15 +42,20 @@ export async function getAllSold(req, res, next) {
         populate: { path: "category" },
       })
       .sort({ createdAt: -1 });
-    const mapped = sold.map((s) => ({
-      id: s._id, // ✅ IMPORTANT
-      inventoryItem: s.inventoryItem,
-      price: s.price,
-      currency: s.currency,
-      buyer: s.buyer,
-      soldDate: s.soldDate,
-      createdAt: s.createdAt,
-    }));
+      const safeSold = sold.filter(
+  (s) => s.inventoryItem !== null
+);
+
+const mapped = safeSold.map((s) => ({
+  id: s._id,
+  inventoryItem: s.inventoryItem,
+  price: s.price,
+  currency: s.currency,
+  buyer: s.buyer,
+  soldDate: s.soldDate,
+  createdAt: s.createdAt,
+}));
+
     res.json({
       success: true,
       data: mapped,
