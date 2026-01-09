@@ -122,6 +122,12 @@ const inventorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+inventorySchema.index({ isDeleted: 1 });
+
+inventorySchema.virtual('isDeleted').get(function() {
+  return this._isDeleted || false;
+});
+
 inventorySchema.set("toJSON", {
   transform: (_, ret) => {
     ret.id = ret._id;

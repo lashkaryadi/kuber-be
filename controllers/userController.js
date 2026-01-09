@@ -47,9 +47,52 @@ import User from "../models/User.js";
 //   );
 // };
 
+import { generateExcel } from "../utils/excel.js";
+
 export const getUsers = async (req, res) => {
-  const users = await User.find();
-  res.json(users); // toJSON will convert _id → id
+  const { search = "" } = req.query;
+
+  const query = {};
+
+  if (search) {
+    query.$or = [
+      { username: new RegExp(search, "i") },
+      { email: new RegExp(search, "i") },
+    ];
+  }
+
+  const users = await User.find(query).select("-password");
+
+  res.json({
+    success: true,
+    data: users,
+  });
+};
+
+/* EXPORT USERS TO EXCEL */
+export const exportUsersToExcel = async (req, res) => {
+  try {
+    const users = await User.find().select("-password");
+
+    const data = users.map(u => ({
+      Username: u.username,
+      Email: u.email,
+      Role: u.role,
+      CreatedAt: u.createdAt,
+    }));
+
+    const buffer = generateExcel(data);
+
+    res.setHeader("Content-Disposition", "attachment; filename=users.xlsx");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.send(buffer);
+  } catch (err) {
+    console.error("Export users error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to export users",
+    });
+  }
 };
 
 

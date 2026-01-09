@@ -120,6 +120,7 @@ export const bulkUpdateInventory = async (req, res) => {
   });
 };
 
+// Separate function for import with duplicate checking (for direct import)
 export const importInventoryFromExcel = async (req, res) => {
   try {
     const rows = parseExcel(req.file.buffer);
@@ -204,6 +205,80 @@ export const importInventoryFromExcel = async (req, res) => {
   }
 };
 
+// Separate function for confirmed import (skips duplicate checking)
+export const confirmInventoryImport = async (req, res) => {
+  try {
+    const rows = parseExcel(req.file.buffer);
+
+    let inserted = 0;
+    let skipped = 0;
+    const report = [];
+
+   for (const row of rows) {
+  // BASIC VALIDATION (same as above)
+  if (
+    !row.serialNumber ||
+    !row.category ||
+    !row.pieces ||
+    !row.weight ||
+    !row.purchaseCode ||
+    !row.saleCode
+  ) {
+    skipped++;
+    report.push({ ...row, status: "INVALID" });
+    continue;
+  }
+
+  // CATEGORY NAME → ID
+  const categoryDoc = await Category.findOne({
+    name: new RegExp(`^${row.category}$`, "i"),
+  });
+
+  if (!categoryDoc) {
+    skipped++;
+    report.push({ ...row, status: "INVALID", reason: "Category not found" });
+    continue;
+  }
+
+  // INSERT (SKIP DUPLICATE CHECK - USER HAS REVIEWED PREVIEW)
+  await Inventory.create({
+  serialNumber: row.serialNumber,
+  category: categoryDoc._id,
+  pieces: row.pieces,
+  weight: row.weight,
+  weightUnit: row.weightUnit || "carat",
+  purchaseCode: row.purchaseCode,
+  saleCode: row.saleCode,
+  status: row.status || "pending",
+
+  dimensions: {
+    length: row.length,
+    width: row.width,
+    height: row.height,
+    unit: row.dimensionUnit || "mm",
+  },
+});
+
+
+  inserted++;
+  report.push({ ...row, status: "INSERTED" });
+}
+
+
+    res.json({
+      success: true,
+      inserted,
+      skipped,
+      report,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Import failed",
+    });
+  }
+};
+
 
 export const exportInventoryToExcel = async (req, res) => {
   const inventory = await Inventory.find().populate("category");
@@ -232,11 +307,48 @@ export const exportInventoryToExcel = async (req, res) => {
 
 /* GET ALL */
 export const getInventory = async (req, res) => {
-  const items = await Inventory.find()
-    .populate("category", "name")
-    .sort({ createdAt: -1 });
+  const {
+    search = "",
+    category,
+    status,
+    sortBy = "createdAt",
+    sortOrder = "desc",
+  } = req.query;
 
-  res.json(items);
+  const query = {};
+
+  // Filters
+  if (category) query.category = category;
+  if (status) query.status = status;
+
+  // 🔍 SEARCH (multi-field)
+  if (search) {
+    const regex = new RegExp(search, "i");
+
+    query.$or = [
+      { serialNumber: regex },
+      { purchaseCode: regex },
+      { saleCode: regex },
+      { location: regex },
+      { certification: regex },
+    ];
+
+    // numeric search support
+    if (!isNaN(search)) {
+      query.$or.push(
+        { weight: Number(search) },
+        { pieces: Number(search) }
+      );
+    }
+  }
+
+  const sort = { [sortBy]: sortOrder === "asc" ? 1 : -1 };
+
+  const items = await Inventory.find(query)
+    .populate("category", "name")
+    .sort(sort);
+
+  res.json({ items });
 };
 
 /* CREATE */

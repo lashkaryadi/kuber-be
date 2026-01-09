@@ -27,6 +27,7 @@ import {
   createUser,
   updateUser,
   deleteUser,
+  exportUsersToExcel,
 } from "../controllers/userController.js";
 import { protect, adminOnly } from "../middleware/authMiddleware.js";
 
@@ -36,5 +37,6 @@ router.get("/", protect, adminOnly, getUsers);
 router.post("/", protect, adminOnly, createUser);
 router.put("/:id", protect, adminOnly, updateUser);
 router.delete("/:id", protect, adminOnly, deleteUser);
+router.get("/export", protect, adminOnly, exportUsersToExcel);
 
 export default router;

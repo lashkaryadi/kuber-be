@@ -30,6 +30,25 @@ export const getDashboardStats = async (req, res) => {
       0
     );
 
+    /* ---------------- IN-STOCK VALUE CALCULATION ---------------- */
+    const inStockInventory = await Inventory.find({ status: "approved" });
+
+    let inStockValue = 0;
+    let valid = true;
+
+    for (const item of inStockInventory) {
+      const saleCodeNum = Number(item.saleCode);
+
+      if (isNaN(saleCodeNum)) {
+        valid = false;
+        break;
+      }
+
+      inStockValue += saleCodeNum * item.weight;
+    }
+
+    const calculatedInStockValue = valid ? inStockValue : "-";
+
     /* ---------------- RECENT SALES ---------------- */
     const recentSales = await Sold.find()
   .sort({ createdAt: -1 })
@@ -59,6 +78,7 @@ const mappedRecentSales = safeRecentSales.map((s) => ({
         soldItems,
         pendingApproval,
         totalValue,
+        inStockValue: calculatedInStockValue,
         recentSales: mappedRecentSales,
       },
     });

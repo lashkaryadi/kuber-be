@@ -30,6 +30,7 @@
 import Sold from "../models/soldModel.js";
 import Invoice from "../models/Invoice.js";
 import Inventory from "../models/inventoryModel.js";
+import { generateExcel } from "../utils/excel.js";
 
 /* =========================
    GET ALL SOLD
@@ -235,6 +236,50 @@ export async function undoSold(req, res, next) {
 //     next(err);
 //   }
 // }
+
+/* =========================
+   EXPORT SOLD ITEMS TO EXCEL
+========================= */
+
+export const exportSoldItemsToExcel = async (req, res) => {
+  try {
+    const soldItems = await Sold.find()
+      .populate({
+        path: "inventoryItem",
+        populate: { path: "category" },
+      })
+      .sort({ createdAt: -1 });
+
+    const data = soldItems.map((s) => ({
+      SerialNumber: s.inventoryItem?.serialNumber,
+      Category: s.inventoryItem?.category?.name,
+      Weight: `${s.inventoryItem?.weight} ${s.inventoryItem?.weightUnit}`,
+      SalePrice: `${s.currency} ${s.price}`,
+      Buyer: s.buyer || "-",
+      SoldDate: s.soldDate ? new Date(s.soldDate).toLocaleDateString() : "-",
+      Status: s.inventoryItem?.status || "-",
+    }));
+
+    const file = generateExcel(data);
+
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=sold-items.xlsx"
+    );
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+
+    res.send(file);
+  } catch (err) {
+    console.error("Export sold items error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to export sold items",
+    });
+  }
+};
 
 /* =========================
    UPDATE SOLD ITEM

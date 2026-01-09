@@ -69,11 +69,37 @@
 // };
 import Inventory from "../models/inventoryModel.js";
 import Category from "../models/Category.js";
+import { generateExcel } from "../utils/excel.js";
 
 /* GET */
 export const getCategories = async (req, res) => {
-  const categories = await Category.find().sort({ createdAt: -1 });
-  res.json(categories);
+  const { search = "", page = 1, limit = 20 } = req.query;
+
+  const query = {};
+
+  if (search) {
+    query.name = new RegExp(search, "i");
+  }
+
+  const skip = (page - 1) * limit;
+
+  const [categories, total] = await Promise.all([
+    Category.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit)),
+    Category.countDocuments(query),
+  ]);
+
+  res.json({
+    success: true,
+    data: categories,
+    pagination: {
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / limit),
+    },
+  });
 };
 
 /* CREATE */
@@ -126,6 +152,38 @@ export const deleteCategory = async (req, res) => {
 
   await Category.findByIdAndDelete(req.params.id);
   res.json({ success: true });
+};
+
+/* EXPORT CATEGORIES TO EXCEL */
+export const exportCategoriesToExcel = async (req, res) => {
+  try {
+    const categories = await Category.find();
+
+    const data = categories.map((c) => ({
+      Name: c.name,
+      Description: c.description || "",
+      CreatedAt: c.createdAt,
+    }));
+
+    const buffer = generateExcel(data);
+
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=categories.xlsx"
+    );
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+
+    res.send(buffer);
+  } catch (err) {
+    console.error("Export categories error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to export categories",
+    });
+  }
 };
 
 

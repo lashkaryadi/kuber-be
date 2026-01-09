@@ -29,6 +29,7 @@ import {
   importMiddleware,
   bulkUpdateInventory,
   downloadImportReport,
+  confirmInventoryImport,
 } from "../controllers/inventoryController.js";
 import { previewInventoryExcel } from "../controllers/inventoryController.js";
 
@@ -43,7 +44,7 @@ router.delete("/:id", protect, deleteInventoryItem);
 router.post("/import", protect, importMiddleware, importInventoryFromExcel);
 router.get("/export", protect, exportInventoryToExcel);
 router.post("/import/preview", protect, importMiddleware, previewInventoryExcel);
-router.post("/import/confirm", protect, importInventoryFromExcel);
+router.post("/import/confirm", protect, importMiddleware, confirmInventoryImport);
 router.post("/import/report", protect, downloadImportReport);
 router.put("/bulk-update", protect, bulkUpdateInventory);
 

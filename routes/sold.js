@@ -16,6 +16,7 @@ import {
   recordSale,
   undoSold,
   updateSold,
+  exportSoldItemsToExcel,
 } from "../controllers/soldController.js";
 import { protect } from "../middleware/authMiddleware.js";
 
@@ -26,4 +27,5 @@ router.get("/:id", protect, getSoldById);
 router.post("/", protect, recordSale);
 router.delete("/:id/undo", protect, undoSold);
 router.put("/:id", protect, updateSold);
+router.get("/export", protect, exportSoldItemsToExcel);
 export default router;
