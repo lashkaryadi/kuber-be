@@ -112,8 +112,9 @@ const inventorySchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "approved", "sold"],
+      enum: ["pending", "in_stock", "sold"],
       default: "pending",
+      index: true,
     },
 
     isDeleted: {

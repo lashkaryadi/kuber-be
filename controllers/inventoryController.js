@@ -59,6 +59,7 @@ import Inventory from "../models/inventoryModel.js";
 import { generateValidationReport } from "../utils/excel.js";
 import { parseExcel, generateExcel } from "../utils/excel.js";
 import Category from "../models/category.js";
+import mongoose from "mongoose";
 
 const upload = multer({ storage: multer.memoryStorage() });
 export const importMiddleware = upload.single("file");
@@ -307,85 +308,78 @@ export const exportInventoryToExcel = async (req, res) => {
 
 /* GET ALL */
 export const getInventory = async (req, res) => {
-  const {
-    search = "",
-    category,
-    status,
-    sortBy = "createdAt",
-    sortOrder = "desc",
-  } = req.query;
+  try {
+   const {
+  search = "",
+  category,
+  status,
+  page = 1,
+  limit = 20,
+  sortBy,
+  sortOrder,
+} = req.query;
 
-  const page = Math.max(parseInt(req.query.page) || 1, 1);
-  const limit = Math.min(parseInt(req.query.limit) || 10, 100);
-  const skip = (page - 1) * limit;
+const sortField = sortBy || "createdAt";
+const sortDir = sortOrder === "asc" ? 1 : -1;
 
-  // Base query to include non-deleted items
-  const baseConditions = [
-    { isDeleted: false },
-    { isDeleted: { $exists: false } }
-  ];
+const sortQuery = { [sortField]: sortDir };
 
-  // Filters
-  if (category) {
-    baseConditions.push({ category: category });
-  }
-  if (status) {
-    baseConditions.push({ status: status });
-  }
+    const query = { isDeleted: false };
 
-  // 🔍 SEARCH (multi-field)
-  if (search) {
-    const regex = new RegExp(search, "i");
-
-    const searchConditions = [
-      { serialNumber: regex },
-      { purchaseCode: regex },
-      { saleCode: regex },
-      { location: regex },
-      { certification: regex },
-    ];
-
-    // numeric search support
-    if (!isNaN(search)) {
-      searchConditions.push(
-        { weight: Number(search) },
-        { pieces: Number(search) }
-      );
+    /* 🔍 SEARCH */
+    if (search) {
+      query.$or = [
+        { serialNumber: { $regex: search, $options: "i" } },
+        { purchaseCode: { $regex: search, $options: "i" } },
+        { saleCode: { $regex: search, $options: "i" } },
+        { certification: { $regex: search, $options: "i" } },
+        { location: { $regex: search, $options: "i" } },
+      ];
     }
 
-    // Combine base conditions with search conditions using $and
-    var query = {
-      $and: [
-        { $or: baseConditions },
-        { $or: searchConditions }
-      ]
-    };
-  } else {
-    // Just use base conditions if no search
-    var query = { $or: baseConditions };
+    /* 📦 CATEGORY FILTER */
+    
+
+if (category && mongoose.Types.ObjectId.isValid(category)) {
+  query.category = category;
+}
+
+    /* 📌 STATUS FILTER */
+    if (status && status !== "all") {
+      query.status = status;
+    }
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    /* 🔃 SORTING */
+// const sortField = req.query.sortBy || "createdAt";
+// const sortOrder = req.query.sortOrder === "asc" ? 1 : -1;
+
+// const sortQuery = { [sortField]: sortOrder };
+
+    const [items, total] = await Promise.all([
+      Inventory.find(query)
+        .populate("category", "name")
+        .sort(sortQuery)
+        .skip(skip)
+        .limit(Number(limit)),
+      Inventory.countDocuments(query),
+    ]);
+
+    res.json({
+      data: items,
+      meta: {
+        total,
+        page: Number(page),
+        pages: Math.ceil(total / limit),
+      },
+    });
+  } catch (err) {
+    console.error("Inventory fetch error:", err);
+    res.status(500).json({ message: "Failed to fetch inventory" });
   }
-
-  const sort = { [sortBy]: sortOrder === "asc" ? 1 : -1 };
-
-  const [items, total] = await Promise.all([
-    Inventory.find(query)
-      .populate("category", "name")
-      .sort(sort)
-      .skip(skip)
-      .limit(limit),
-    Inventory.countDocuments(query),
-  ]);
-
-  res.json({
-    data: items,
-    meta: {
-      page,
-      limit,
-      total,
-      pages: Math.ceil(total / limit),
-    },
-  });
 };
+
 
 /* CREATE */
 export const createInventoryItem = async (req, res, next) => {
