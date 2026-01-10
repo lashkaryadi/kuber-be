@@ -112,7 +112,7 @@ const inventorySchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "approved"],
+      enum: ["pending", "approved", "sold"],
       default: "pending",
     },
 

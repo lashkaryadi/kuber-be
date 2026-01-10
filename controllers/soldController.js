@@ -157,10 +157,19 @@ export async function recordSale(req, res, next) {
       });
     }
 
-    if (inventory.status !== "approved" && inventory.status !== "pending") {
+    const ALLOWED_TO_SELL = ["approved", "pending"];
+
+    if (!ALLOWED_TO_SELL.includes(inventory.status)) {
       return res.status(400).json({
         success: false,
-        message: "Only pending or approved inventory items can be sold",
+        message: "Only approved or pending items can be sold",
+      });
+    }
+
+    if (inventory.status === "sold") {
+      return res.status(400).json({
+        success: false,
+        message: "Item already sold",
       });
     }
 

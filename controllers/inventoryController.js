@@ -566,3 +566,26 @@ export const downloadImportReport = async (req, res) => {
 
   res.send(buffer);
 };
+
+/* =========================
+   GET SELLABLE INVENTORY (approved and pending items)
+========================= */
+export const getSellableInventory = async (req, res) => {
+  try {
+    const items = await Inventory.find({
+      status: { $in: ["approved", "pending"] },
+      isDeleted: { $ne: true } // Exclude deleted items
+    }).populate("category", "name").sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: items,
+    });
+  } catch (err) {
+    console.error("Get sellable inventory error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch sellable inventory",
+    });
+  }
+};

@@ -30,6 +30,7 @@ import {
   bulkUpdateInventory,
   downloadImportReport,
   confirmInventoryImport,
+  getSellableInventory,
 } from "../controllers/inventoryController.js";
 import { previewInventoryExcel } from "../controllers/inventoryController.js";
 
@@ -47,6 +48,7 @@ router.post("/import/preview", protect, importMiddleware, previewInventoryExcel)
 router.post("/import/confirm", protect, importMiddleware, confirmInventoryImport);
 router.post("/import/report", protect, downloadImportReport);
 router.put("/bulk-update", protect, bulkUpdateInventory);
+router.get("/sellable", protect, getSellableInventory);
 
 
 export default router;
