@@ -1,39 +1,166 @@
 import PDFDocument from "pdfkit";
+import path from "path";
+import process from "process";
 
-export function generateInvoicePDF(invoice) {
-  const doc = new PDFDocument({ size: "A4", margin: 50 });
+export const generateInvoicePDF = (invoice, company) => {
+  const doc = new PDFDocument({ margin: 50 });
 
-  doc.fontSize(20).text("INVOICE", { align: "center" });
-  doc.moveDown();
+  // ✅ Currency formatter (USED)
+  const formatCurrency = (amount, currency) => {
+    const symbols = { USD: "$", EUR: "€", GBP: "£", INR: "₹" };
+    return `${symbols[currency] || currency} ${Number(amount || 0).toLocaleString(
+      undefined,
+      {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }
+    )}`;
+  };
 
-  doc.fontSize(12);
-  doc.text(`Invoice No: ${invoice.invoiceNumber}`);
-  doc.text(`Invoice Date: ${new Date(invoice.invoiceDate).toDateString()}`);
-  doc.moveDown();
+  /* ======================
+      HEADER (LOGO + COMPANY)
+  ====================== */
 
-  doc.text(`Buyer: ${invoice.buyer || "-"}`);
-  doc.text(`Currency: ${invoice.currency}`);
-  doc.moveDown();
+  if (company?.logoUrl) {
+    try {
+      const logoPath = path.join(process.cwd(), company.logoUrl);
+      doc.image(logoPath, 50, 45, { width: 80 });
+    } catch (err) {
+      console.log("⚠️ Company logo not found:", err.message);
+    }
+  }
 
-  doc.text("Item Details", { underline: true });
-  doc.moveDown(0.5);
+  doc.fontSize(20).text(company?.companyName || "Company Name", 150, 50);
+  doc.fontSize(10).text(company?.address || "", 150, 75);
+  doc.text(`GSTIN: ${company?.gstNumber || "-"}`, 150, 90);
+  doc.text(`Phone: ${company?.phone || "-"}`, 150, 105);
+  doc.text(`Email: ${company?.email || "-"}`, 150, 120);
 
-  const item = invoice.soldItem.inventoryItem;
+  /* ======================
+        INVOICE META
+  ====================== */
 
-  doc.text(`Serial Number: ${item.serialNumber}`);
-  doc.text(`Category: ${item.category?.name || "-"}`);
-  doc.text(`Weight: ${item.weight} ${item.weightUnit}`);
-  doc.moveDown();
+  doc.fontSize(16).text("TAX INVOICE", 400, 50, { align: "right" });
+  doc
+    .fontSize(10)
+    .text(`Invoice No: ${invoice.invoiceNumber}`, 400, 75, { align: "right" })
+    .text(
+      `Date: ${new Date(invoice.invoiceDate).toLocaleDateString()}`,
+      400,
+      90,
+      { align: "right" }
+    );
 
-  doc.fontSize(14).text(
-    `Total Amount: ${invoice.currency} ${invoice.amount}`,
+  doc.moveTo(50, 150).lineTo(550, 150).stroke();
+
+  /* ======================
+          BILL TO
+  ====================== */
+
+  doc.fontSize(12).text("Bill To:", 50, 170);
+  doc.fontSize(10).text(invoice.buyer || "Walk-in Customer", 50, 190);
+
+  /* ======================
+        ITEMS TABLE
+  ====================== */
+
+  const tableTop = 250;
+
+  doc.fontSize(10).text("Description", 50, tableTop);
+  doc.text("Category", 200, tableTop);
+  doc.text("Weight", 320, tableTop);
+  doc.text("Amount", 450, tableTop, { align: "right" });
+
+  doc.moveTo(50, tableTop + 15).lineTo(550, tableTop + 15).stroke();
+
+  const item = invoice.soldItem?.inventoryItem;
+  const itemY = tableTop + 30;
+
+  if (item) {
+    doc.text(item.serialNumber || "-", 50, itemY, { width: 140 });
+    doc.text(item.category?.name || "-", 200, itemY);
+    doc.text(
+      `${item.weight || "-"} ${item.weightUnit || ""}`,
+      320,
+      itemY
+    );
+    doc.text(
+      formatCurrency(invoice.subtotal, invoice.currency),
+      450,
+      itemY,
+      { align: "right" }
+    );
+  }
+
+  /* ======================
+            TOTALS
+  ====================== */
+
+  const totalsY = itemY + 60;
+  doc.moveTo(350, totalsY - 10).lineTo(550, totalsY - 10).stroke();
+
+  doc.text("Subtotal:", 350, totalsY);
+  doc.text(
+    formatCurrency(invoice.subtotal, invoice.currency),
+    450,
+    totalsY,
     { align: "right" }
   );
 
-  doc.moveDown(2);
-  doc.fontSize(10).text("Thank you for your business!", {
-    align: "center",
-  });
+  if (invoice.taxRate > 0) {
+    const cgstRate = invoice.taxRate / 2;
+    const cgstAmount = (invoice.subtotal * cgstRate) / 100;
+    const sgstAmount = cgstAmount;
+
+    doc.text(`CGST (${cgstRate.toFixed(2)}%):`, 350, totalsY + 20);
+    doc.text(
+      formatCurrency(cgstAmount, invoice.currency),
+      450,
+      totalsY + 20,
+      { align: "right" }
+    );
+
+    doc.text(`SGST (${cgstRate.toFixed(2)}%):`, 350, totalsY + 40);
+    doc.text(
+      formatCurrency(sgstAmount, invoice.currency),
+      450,
+      totalsY + 40,
+      { align: "right" }
+    );
+  }
+
+  doc.moveTo(350, totalsY + 65).lineTo(550, totalsY + 65).stroke();
+
+  doc.fontSize(12).text("Total:", 350, totalsY + 75);
+  doc.text(
+    formatCurrency(invoice.totalAmount, invoice.currency),
+    450,
+    totalsY + 75,
+    { align: "right" }
+  );
+
+  /* ======================
+            FOOTER
+  ====================== */
+
+  if (invoice.notes) {
+    doc.fontSize(10).text("Notes:", 50, totalsY + 120);
+    doc
+      .fontSize(9)
+      .text(invoice.notes, 50, totalsY + 135, { width: 500 });
+  }
+
+  // ✍️ Signature
+  if (company?.signatureUrl) {
+    try {
+      const signPath = path.join(process.cwd(), company.signatureUrl);
+      doc.image(signPath, 400, 650, { width: 100 });
+    } catch (err) {
+      console.log("⚠️ Signature not found:", err.message);
+    }
+  }
+
+  doc.fontSize(10).text("Authorized Signature", 400, 720);
 
   return doc;
-}
+};

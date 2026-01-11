@@ -31,7 +31,10 @@ import Sold from "../models/soldModel.js";
 import Invoice from "../models/Invoice.js";
 import Inventory from "../models/inventoryModel.js";
 import AuditLog from "../models/auditLogModel.js";
+import Company from "../models/companyModel.js";
+import { sendInvoiceEmail } from "../utils/emailService.js";
 import { generateExcel } from "../utils/excel.js";
+import { getNextInvoiceNumber } from "../utils/invoiceNumber.js";
 
 /* =========================
    GET ALL SOLD
@@ -207,12 +210,41 @@ export async function recordSale(req, res, next) {
     });
 
     /* ---------- CREATE INVOICE ---------- */
-    await Invoice.create({
+    const company = await Company.findOne({ ownerId: req.user.ownerId });
+    const taxRate = company?.taxRate || 0;
+
+    const cgst = taxRate / 2;
+    const sgst = taxRate / 2;
+
+    const cgstAmount = (price * cgst) / 100;
+    const sgstAmount = (price * sgst) / 100;
+
+    const taxAmount = cgstAmount + sgstAmount;
+    const totalAmount = price + taxAmount;
+
+    const invoice = await Invoice.create({
       soldItem: sold._id,
-      invoiceNumber: `INV-${Date.now()}`,
+      invoiceNumber: await getNextInvoiceNumber(),
       buyer,
       currency,
-      amount: price,
+
+      items: [
+        {
+          name: inventory.serialNumber,
+          category: inventory.category?.name || "-",
+          weight: `${inventory.weight} ${inventory.weightUnit}`,
+          price,
+        },
+      ],
+
+      subtotal: price,
+      taxRate,
+      taxType: "cgst_sgst", // Default to CGST/SGST for intrastate
+      cgstAmount,
+      sgstAmount,
+      taxAmount,
+      totalAmount,
+      notes: "Thank you for your business.",
     });
 
     /* ---------- AUDIT LOG ---------- */
@@ -232,6 +264,11 @@ export async function recordSale(req, res, next) {
       userAgent: req.headers["user-agent"],
       ownerId: req.user.ownerId,
     });
+
+    /* ---------- SEND INVOICE EMAIL ---------- */
+    if (buyer) {
+      await sendInvoiceEmail(buyer, invoice.invoiceNumber);
+    }
 
     /* ---------- RESPONSE ---------- */
     res.status(201).json({

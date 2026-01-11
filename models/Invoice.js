@@ -42,7 +42,7 @@ const invoiceSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Sold",
       required: true,
-      unique: true, // ✅ 1 invoice per sold
+      unique: true,
       index: true,
     },
 
@@ -65,9 +65,37 @@ const invoiceSchema = new mongoose.Schema(
       required: true,
     },
 
-    amount: {
-      type: Number,
+    items: [
+      {
+        name: String,
+        category: String,
+        weight: String,
+        price: Number,
+      },
+    ],
+
+    subtotal: Number,
+    taxRate: { type: Number, default: 0 },
+    taxType: {
+      type: String,
+      enum: ["cgst_sgst", "igst"],
+      default: "cgst_sgst",
+    },
+    cgstAmount: Number,
+    sgstAmount: Number,
+    taxAmount: Number,
+    totalAmount: Number,
+    notes: String,
+    paymentTerms: {
+      type: String,
+      default: "Payment due within 7 days",
+    },
+
+    ownerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
       required: true,
+      index: true,
     },
   },
   { timestamps: true }
