@@ -19,19 +19,39 @@ import mongoose from "mongoose";
 
 const soldSchema = new mongoose.Schema(
   {
-    // 🔗 Reference to inventory item
+    // 🔗 Reference to inventory item (NO UNIQUE CONSTRAINT)
     inventoryItem: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Inventory",
       required: true,
-      //unique: true, // ek inventory item sirf ek baar sold ho
+      index: true, // ✅ Index for fast lookups
+    },
+
+    // 📦 Quantity details (for partial sales)
+    soldPieces: {
+      type: Number,
+      required: true,
+      min: [0.01, "Sold pieces must be positive"], // ✅ Validation
+    },
+
+    soldWeight: {
+      type: Number,
+      required: true,
+      min: [0.01, "Sold weight must be positive"], // ✅ Validation
     },
 
     // 💰 Sale details
     price: {
       type: Number,
       required: true,
-      min: 0,
+      min: [0, "Price cannot be negative"],
+    },
+
+    // ✅ CRITICAL: Store total price separately to avoid floating-point errors
+    totalPrice: {
+      type: Number,
+      required: true,
+      min: [0, "Total price cannot be negative"],
     },
 
     currency: {
@@ -44,22 +64,43 @@ const soldSchema = new mongoose.Schema(
     soldDate: {
       type: Date,
       required: true,
+      index: true, // ✅ Index for date range queries
     },
 
     buyer: {
       type: String,
       trim: true,
+      maxlength: [200, "Buyer name too long"],
     },
 
     ownerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      index: true, // ✅ Critical for multi-tenant filtering
+    },
+
+    // 💰 Financial tracking (optional, for profit reports)
+    costPrice: {
+      type: Number,
+      min: [0, "Cost price cannot be negative"],
+    },
+
+    profit: {
+      type: Number,
+    },
+
+    // 🔒 Soft delete support
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
   },
   {
-    timestamps: true, // createdAt, updatedAt
-  });
+    timestamps: true,
+  }
+);
   soldSchema.set("toJSON", {
   transform: (_, ret) => {
     ret.id = ret._id;
@@ -69,10 +110,13 @@ const soldSchema = new mongoose.Schema(
 })
 
 /* =========================
-   INDEXES (IMPORTANT)
+   PERFORMANCE INDEXES
 ========================= */
 
-// Sort by recent sales
+// ✅ Composite indexes for multi-tenant queries
+soldSchema.index({ ownerId: 1, soldDate: -1 }); // For analytics queries
+soldSchema.index({ ownerId: 1, inventoryItem: 1 }); // For inventory history
+soldSchema.index({ ownerId: 1, isDeleted: 1, createdAt: -1 }); // For list views
 
 
 export default mongoose.model("Sold", soldSchema);

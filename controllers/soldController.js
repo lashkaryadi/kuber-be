@@ -1,32 +1,3 @@
-// import * as Sold from '../models/soldModel.js';
-
-// export function getAllSold(req, res, next) {
-//   try {
-//     const sold = Sold.getAll();
-//     res.json(sold);
-//   } catch (err) {
-//     next(err);
-//   }
-// }
-
-// export function getSoldById(req, res, next) {
-//   try {
-//     const record = Sold.getById(req.params.id);
-//     if (!record) return res.status(404).json({ message: 'Record not found' });
-//     res.json(record);
-//   } catch (err) {
-//     next(err);
-//   }
-// }
-
-// export function recordSale(req, res, next) {
-//   try {
-//     const created = Sold.create(req.body);
-//     res.status(201).json(created);
-//   } catch (err) {
-//     next(err);
-//   }
-// }
 import Sold from "../models/soldModel.js";
 import Invoice from "../models/Invoice.js";
 import Inventory from "../models/inventoryModel.js";
@@ -93,6 +64,8 @@ export const getSoldItems = async (req, res) => {
   const mapped = safeSold.map((s) => ({
     id: s._id,
     inventoryItem: s.inventoryItem,
+    soldPieces: s.soldPieces,
+    soldWeight: s.soldWeight,
     price: s.price,
     currency: s.currency,
     buyer: s.buyer,
@@ -135,7 +108,113 @@ export async function getSoldById(req, res, next) {
 }
 
 /* =========================
-   RECORD SALE
+   MARK AS SOLD (WITH PARTIAL QUANTITY SUPPORT)
+========================= */
+
+export const markAsSold = async (req, res) => {
+  try {
+    const {
+      inventoryId,
+      soldPieces,
+      soldWeight,
+      price,
+      currency,
+      soldDate,
+      buyer,
+    } = req.body;
+
+    if (
+      !inventoryId ||
+      !soldPieces ||
+      !soldWeight ||
+      !price ||
+      !currency ||
+      !soldDate
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields",
+      });
+    }
+
+    const inventory = await Inventory.findOne({
+      _id: inventoryId,
+      ownerId: req.user.ownerId,
+    });
+
+    if (!inventory) {
+      return res.status(404).json({
+        success: false,
+        message: "Inventory item not found",
+      });
+    }
+
+    // 🔐 Overselling protection
+    if (soldPieces > inventory.availablePieces) {
+      return res.status(400).json({
+        success: false,
+        message: "Sold pieces exceed available stock",
+      });
+    }
+
+    if (soldWeight > inventory.availableWeight) {
+      return res.status(400).json({
+        success: false,
+        message: "Sold weight exceeds available stock",
+      });
+    }
+
+    // ✅ Calculate cost and profit
+    const cost = (inventory.purchasePrice || 0) * soldWeight;
+    const profit = price - cost;
+
+    // ✅ Create sold entry (NO UNIQUE restriction now)
+    const sold = await Sold.create({
+      inventoryItem: inventory._id,
+      soldPieces,
+      soldWeight,
+      price, // total price
+      totalPrice: price, // store separately to avoid floating-point errors
+      currency,
+      buyer,
+      soldDate,
+      costPrice: cost,
+      profit,
+      ownerId: req.user.ownerId,
+    });
+
+    // ✅ Deduct inventory
+    inventory.availablePieces -= soldPieces;
+    inventory.availableWeight -= soldWeight;
+
+    // ✅ Auto status update
+    if (
+      inventory.availablePieces === 0 ||
+      inventory.availableWeight === 0
+    ) {
+      inventory.status = "sold";
+    } else {
+      inventory.status = "partially_sold";
+    }
+
+    await inventory.save();
+
+    res.json({
+      success: true,
+      data: sold,
+    });
+  } catch (err) {
+    console.error("markAsSold error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to mark item as sold",
+    });
+  }
+};
+
+/* =========================
+   RECORD SALE (FOR FULL ITEM SALES)
 ========================= */
 
 export async function recordSale(req, res, next) {
@@ -168,12 +247,12 @@ export async function recordSale(req, res, next) {
       });
     }
 
-    const ALLOWED_TO_SELL = ["in_stock", "pending"];
+    const ALLOWED_TO_SELL = ["in_stock", "pending", "partially_sold"];
 
     if (!ALLOWED_TO_SELL.includes(inventory.status)) {
       return res.status(400).json({
         success: false,
-        message: "Only In Stock or pending items can be sold",
+        message: "Only In Stock, Pending, or Partially Sold items can be sold",
       });
     }
 
@@ -200,14 +279,30 @@ export async function recordSale(req, res, next) {
     await inventory.save();
 
     /* ---------- CREATE SOLD (ONLY ONCE) ---------- */
+    // ✅ Calculate cost and profit (using default cost of 0 since purchasePrice removed)
+    const cost = 0; // Removed purchasePrice calculation
+    const profit = price - cost;
+
+    // For full sales, soldPieces and soldWeight equal the available amounts
     const sold = await Sold.create({
       inventoryItem: inventory._id,
-      price,
+      soldPieces: inventory.availablePieces,  // Full quantity
+      soldWeight: inventory.availableWeight,  // Full weight
+      totalPrice: price,
+      price: price,
       currency,
       soldDate,
       buyer,
+      costPrice: cost,
+      profit,
       ownerId: req.user.ownerId,
     });
+
+    // Update inventory to reflect sold status
+    inventory.availablePieces = 0;
+    inventory.availableWeight = 0;
+    inventory.status = "sold";
+    await inventory.save();
 
     /* ---------- CREATE INVOICE ---------- */
     const company = await Company.findOne({ ownerId: req.user.ownerId });
@@ -223,17 +318,21 @@ export async function recordSale(req, res, next) {
     const totalAmount = price + taxAmount;
 
     const invoice = await Invoice.create({
-      soldItem: sold._id,
       invoiceNumber: await getNextInvoiceNumber(),
       buyer,
       currency,
 
       items: [
         {
-          name: inventory.serialNumber,
+          soldId: sold._id,
+          serialNumber: inventory.serialNumber,
           category: inventory.category?.name || "-",
-          weight: `${inventory.weight} ${inventory.weightUnit}`,
+          weight: inventory.weight,
+          weightUnit: inventory.weightUnit,
+          pieces: inventory.pieces,
           price,
+          currency,
+          amount: price,
         },
       ],
 
@@ -244,7 +343,7 @@ export async function recordSale(req, res, next) {
       sgstAmount,
       taxAmount,
       totalAmount,
-      notes: "Thank you for your business.",
+      ownerId: req.user.ownerId,
     });
 
     /* ---------- AUDIT LOG ---------- */
@@ -280,6 +379,7 @@ export async function recordSale(req, res, next) {
     next(err);
   }
 }
+
 /* =========================
    UNDO SOLD → BACK TO INVENTORY
 ========================= */
@@ -301,12 +401,26 @@ export async function undoSold(req, res, next) {
 
     // revert inventory - we'll set it back to "approved" as the default state for items that can be sold again
     // In a more sophisticated system, we might track the original status before selling
-    await Inventory.findByIdAndUpdate(sold.inventoryItem, {
-      status:"in_stock",
-    });
+    const inventory = await Inventory.findById(sold.inventoryItem);
+    inventory.availablePieces += sold.soldPieces;
+    inventory.availableWeight += sold.soldWeight;
 
-    // delete invoice
-    await Invoice.findOneAndDelete({ soldItem: sold._id });
+    // Only change status back to in_stock if the inventory isn't fully sold anymore
+    if (inventory.availablePieces > 0 && inventory.availableWeight > 0) {
+      inventory.status = "in_stock";
+    } else {
+      inventory.status = "sold"; // Still fully sold
+    }
+
+    await inventory.save();
+
+    // delete invoice (handle both old and new formats)
+    await Invoice.findOneAndDelete({
+      $or: [
+        { "items.soldId": sold._id },
+        { soldItem: sold._id }
+      ]
+    });
 
     // delete sold record
     await sold.deleteOne();
@@ -331,44 +445,6 @@ export async function undoSold(req, res, next) {
   }
 }
 
-// export async function undoSold(req, res, next) {
-//   try {
-//     const { id } = req.params;
-
-//     // 🔍 find sold record
-//     const sold = await Sold.findById(id);
-
-//     if (!sold) {
-//       return res.status(404).json({
-//         message: "Sold record not found",
-//       });
-//     }
-
-//     // 🔍 find inventory
-//     const inventory = await Inventory.findById(sold.inventoryItem);
-
-//     if (!inventory) {
-//       return res.status(404).json({
-//         message: "Inventory item not found",
-//       });
-//     }
-
-//     // 🔁 revert inventory status
-//     inventory.status = "approved";
-//     await inventory.save();
-
-//     // ❌ delete sold record
-//     await Sold.findByIdAndDelete(id);
-
-//     res.json({
-//       success: true,
-//       message: "Sale undone successfully",
-//     });
-//   } catch (err) {
-//     next(err);
-//   }
-// }
-
 /* =========================
    EXPORT SOLD ITEMS TO EXCEL
 ========================= */
@@ -385,8 +461,11 @@ export const exportSoldItemsToExcel = async (req, res) => {
     const data = soldItems.map((s) => ({
       SerialNumber: s.inventoryItem?.serialNumber,
       Category: s.inventoryItem?.category?.name,
-      Weight: `${s.inventoryItem?.weight} ${s.inventoryItem?.weightUnit}`,
-      SalePrice: `${s.currency} ${s.price}`,
+      SoldPieces: s.soldPieces,
+      SoldWeight: `${s.soldWeight} ${s.inventoryItem?.weightUnit || ''}`,
+      OriginalPieces: s.inventoryItem?.totalPieces,
+      OriginalWeight: `${s.inventoryItem?.totalWeight} ${s.inventoryItem?.weightUnit || ''}`,
+      SalePrice: `${s.currency} ${s.totalPrice || s.price}`,
       Buyer: s.buyer || "-",
       SoldDate: s.soldDate ? new Date(s.soldDate).toLocaleDateString() : "-",
       Status: s.inventoryItem?.status || "-",
@@ -438,11 +517,24 @@ export async function updateSold(req, res, next) {
 
     await sold.save();
 
+    // Update invoice for both old and new formats
     await Invoice.findOneAndUpdate(
       { soldItem: sold._id },
       {
         amount: price,
         buyer,
+      }
+    );
+
+    // Update invoice for new format
+    await Invoice.findOneAndUpdate(
+      { "items.soldId": sold._id },
+      {
+        $set: {
+          "items.$.price": price,
+          "items.$.amount": price,
+          buyer,
+        }
       }
     );
 
@@ -469,76 +561,3 @@ export async function updateSold(req, res, next) {
     next(err);
   }
 }
-
-// export async function updateSold(req, res, next) {
-//   try {
-//     const { id } = req.params;
-//     const { price, soldDate, buyer } = req.body;
-
-//     if (!price || !soldDate) {
-//       return res.status(400).json({
-//         message: "Price and sold date are required",
-//       });
-//     }
-
-//     const sold = await Sold.findById(id);
-
-//     if (!sold) {
-//       return res.status(404).json({
-//         message: "Sold record not found",
-//       });
-//     }
-
-//     sold.price = price;
-//     sold.soldDate = soldDate;
-//     sold.buyer = buyer;
-
-//     await sold.save();
-
-//     res.json({
-//       success: true,
-//       data: sold,
-//     });
-//   } catch (err) {
-//     next(err);
-//   }
-// }
-
-// export async function markAsSold(req, res, next) {
-//   try {
-//     const { inventoryId, price, currency, soldDate, buyer } = req.body;
-
-//     if (!inventoryId || !price || !currency || !soldDate) {
-//       return res.status(400).json({ message: "Missing required fields" });
-//     }
-
-//     const inventory = await Inventory.findById(inventoryId);
-//     if (!inventory) {
-//       return res.status(404).json({ message: "Inventory item not found" });
-//     }
-
-//     if (inventory.status !== "approved") {
-//       return res
-//         .status(400)
-//         .json({ message: "Only approved inventory items can be sold" });
-//     }
-
-//     inventory.status = "sold";
-//     await inventory.save();
-
-//     const sold = await Sold.create({
-//       inventoryItem: inventory._id,
-//       price,
-//       currency,
-//       soldDate,
-//       buyer,
-//     });
-
-//     res.status(201).json({
-//       success: true,
-//       data: sold,
-//     });
-//   } catch (err) {
-//     next(err);
-//   }
-// }

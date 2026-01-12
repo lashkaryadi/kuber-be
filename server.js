@@ -18,6 +18,7 @@ import uploadRoutes from "./routes/upload.js";
 import companyUploadRoutes from "./routes/uploadRoutes.js";
 import inventoryUploadRoutes from "./routes/inventoryUploadRoutes.js";
 import companyRoutes from "./routes/companyRoutes.js";
+import analyticsRoutes from "./routes/analyticsRoutes.js";
 import path from "path";
 import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 
@@ -55,6 +56,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/invoices", invoice);
 app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/company", companyRoutes);
+app.use("/api/analytics", analyticsRoutes);
 
 // 👇 STATIC FILES
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));

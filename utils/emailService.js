@@ -1,3 +1,4 @@
+import process from "process"  
 import nodemailer from "nodemailer";
 
 export const sendInvoiceEmail = async (to, invoiceNumber) => {

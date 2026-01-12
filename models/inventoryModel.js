@@ -45,25 +45,40 @@ const inventorySchema = new mongoose.Schema(
     serialNumber: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
+      maxlength: [100, "Serial number too long"],
     },
 
     category: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
       required: true,
+      index: true,
     },
 
-    pieces: {
+    // ✅ CRITICAL: Separate total and available quantities
+    totalPieces: {
       type: Number,
       required: true,
-      min: 1,
+      min: [0, "Total pieces cannot be negative"],
     },
 
-    weight: {
+    availablePieces: {
       type: Number,
       required: true,
+      min: [0, "Available pieces cannot be negative"],
+    },
+
+    totalWeight: {
+      type: Number,
+      required: true,
+      min: [0, "Total weight cannot be negative"],
+    },
+
+    availableWeight: {
+      type: Number,
+      required: true,
+      min: [0, "Available weight cannot be negative"],
     },
 
     weightUnit: {
@@ -112,7 +127,7 @@ const inventorySchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "in_stock", "sold"],
+      enum: ["pending", "in_stock", "partially_sold", "sold"],
       default: "pending",
       index: true,
     },
@@ -137,11 +152,54 @@ const inventorySchema = new mongoose.Schema(
 
 inventorySchema.index({ isDeleted: 1 });
 
+// ✅ Unique serial per owner
+inventorySchema.index(
+  { ownerId: 1, serialNumber: 1 },
+  { unique: true }
+);
+
+// ✅ Validation middleware
+inventorySchema.pre("save", function(next) {
+  // Ensure available doesn't exceed total
+  if (this.availablePieces > this.totalPieces) {
+    return next(new Error("Available pieces cannot exceed total pieces"));
+  }
+
+  if (this.availableWeight > this.totalWeight) {
+    return next(new Error("Available weight cannot exceed total weight"));
+  }
+
+  // ✅ AUTO-UPDATE STATUS based on availability
+  if (this.availablePieces === 0 || this.availableWeight === 0) {
+    this.status = "sold";
+  } else if (
+    this.availablePieces < this.totalPieces ||
+    this.availableWeight < this.totalWeight
+  ) {
+    this.status = "partially_sold";
+  } else if (this.status === "sold" || this.status === "partially_sold") {
+    // If fully restored, set back to in_stock
+    this.status = "in_stock";
+  }
+
+  next();
+});
+
 inventorySchema.set("toJSON", {
   transform: (_, ret) => {
     ret.id = ret._id;
+
+    // ✅ BACKWARD COMPATIBILITY: Map new fields to old field names
+    if (ret.totalPieces !== undefined) {
+      ret.pieces = ret.availablePieces ?? ret.totalPieces;
+    }
+    if (ret.totalWeight !== undefined) {
+      ret.weight = ret.availableWeight ?? ret.totalWeight;
+    }
+
     delete ret._id;
     delete ret.__v;
+    return ret;
   },
 });
 

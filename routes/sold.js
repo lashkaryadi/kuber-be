@@ -17,6 +17,7 @@ import {
   undoSold,
   updateSold,
   exportSoldItemsToExcel,
+  markAsSold,
 } from "../controllers/soldController.js";
 import { protect } from "../middleware/authMiddleware.js";
 
@@ -25,6 +26,7 @@ const router = express.Router();
 router.get("/", protect, getSoldItems);
 router.get("/:id", protect, getSoldById);
 router.post("/", protect, recordSale);
+router.post("/mark-as-sold", protect, markAsSold);
 router.delete("/:id/undo", protect, undoSold);
 router.put("/:id", protect, updateSold);
 router.get("/export", protect, exportSoldItemsToExcel);

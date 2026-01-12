@@ -74,6 +74,7 @@ export const previewInventoryExcel = async (req, res) => {
     for (const row of rows) {
       const exists = await Inventory.findOne({
         serialNumber: row.serialNumber,
+        ownerId: req.user.ownerId,
       });
 
       preview.push({
@@ -112,7 +113,7 @@ export const bulkUpdateInventory = async (req, res) => {
   }
 
   await Inventory.updateMany(
-    { _id: { $in: ids } },
+    { _id: { $in: ids }, ownerId: req.user.ownerId },
     { $set: updates }
   );
 
@@ -160,6 +161,7 @@ export const importInventoryFromExcel = async (req, res) => {
   // DUPLICATE CHECK
   const exists = await Inventory.findOne({
     serialNumber: row.serialNumber,
+    ownerId: req.user.ownerId,
   });
 
   if (exists) {
@@ -172,8 +174,10 @@ export const importInventoryFromExcel = async (req, res) => {
   await Inventory.create({
   serialNumber: row.serialNumber,
   category: categoryDoc._id,
-  pieces: row.pieces,
-  weight: row.weight,
+  totalPieces: row.pieces,
+  availablePieces: row.pieces, // Initially available = total
+  totalWeight: row.weight,
+  availableWeight: row.weight, // Initially available = total
   weightUnit: row.weightUnit || "carat",
   purchaseCode: row.purchaseCode,
   saleCode: row.saleCode,
@@ -247,8 +251,10 @@ export const confirmInventoryImport = async (req, res) => {
   await Inventory.create({
   serialNumber: row.serialNumber,
   category: categoryDoc._id,
-  pieces: row.pieces,
-  weight: row.weight,
+  totalPieces: row.pieces,
+  availablePieces: row.pieces, // Initially available = total
+  totalWeight: row.weight,
+  availableWeight: row.weight, // Initially available = total
   weightUnit: row.weightUnit || "carat",
   purchaseCode: row.purchaseCode,
   saleCode: row.saleCode,
@@ -352,7 +358,11 @@ if (category && mongoose.Types.ObjectId.isValid(category)) {
 
     /* 📌 STATUS FILTER */
     if (status && status !== "all") {
-      query.status = status;
+      if (status === "partially_sold") {
+        query.status = "partially_sold";
+      } else {
+        query.status = status;
+      }
     }
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -395,6 +405,8 @@ export const createInventoryItem = async (req, res, next) => {
       category,
       pieces,
       weight,
+      totalPieces,
+      totalWeight,
       weightUnit,
       purchaseCode,
       saleCode,
@@ -406,11 +418,15 @@ export const createInventoryItem = async (req, res, next) => {
       images,
     } = req.body;
 
+    // ✅ Normalize payload (frontend safety)
+    const finalPieces = Number(pieces ?? totalPieces);
+    const finalWeight = Number(weight ?? totalWeight);
+
     if (
       !serialNumber ||
       !category ||
-      !pieces ||
-      !weight ||
+      !finalPieces ||
+      !finalWeight ||
       !weightUnit ||
       !purchaseCode ||
       !saleCode
@@ -426,18 +442,20 @@ export const createInventoryItem = async (req, res, next) => {
     const item = await Inventory.create({
       serialNumber,
       category,
-      pieces,
-      weight,
+      totalPieces: finalPieces,
+      availablePieces: finalPieces,
+      totalWeight: finalWeight,
+      availableWeight: finalWeight,
       weightUnit,
       purchaseCode,
       saleCode,
-      dimensions, // 🔥 IMPORTANT
+      dimensions,
       location,
       certification,
       status,
       description,
       images,
-      ownerId, // ✅ FIX
+      ownerId,
     });
 
     res.status(201).json({
@@ -476,14 +494,38 @@ export const updateInventoryItem = async (req, res) => {
   try {
     const { id } = req.params;
 
+   // Handle the new schema fields properly
+   const updateData = { ...req.body };
+
+   // If pieces or weight are being updated, update total and available accordingly
+   if (updateData.pieces !== undefined) {
+     updateData.totalPieces = updateData.pieces;
+     // Only update availablePieces if it's not already set separately
+     if (updateData.availablePieces === undefined) {
+       updateData.availablePieces = updateData.pieces;
+     }
+     // Remove the old field to avoid conflicts
+     delete updateData.pieces;
+   }
+
+   if (updateData.weight !== undefined) {
+     updateData.totalWeight = updateData.weight;
+     // Only update availableWeight if it's not already set separately
+     if (updateData.availableWeight === undefined) {
+       updateData.availableWeight = updateData.weight;
+     }
+     // Remove the old field to avoid conflicts
+     delete updateData.weight;
+   }
+
    const updated = await Inventory.findOneAndUpdate(
   {
     _id: id,
     ownerId: req.user.ownerId
   },
   {
-    ...req.body,
-    dimensions: req.body.dimensions, // 🔥 FORCE SAVE
+    ...updateData,
+    dimensions: updateData.dimensions, // 🔥 FORCE SAVE
   },
   {
     new: true,

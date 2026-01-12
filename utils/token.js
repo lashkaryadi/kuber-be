@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import process from "process";
 
 export const generateAccessToken = (user) =>
   jwt.sign(
