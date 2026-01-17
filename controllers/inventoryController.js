@@ -170,14 +170,56 @@ export const importInventoryFromExcel = async (req, res) => {
         continue;
       }
 
+      // Process shapes from the imported data
+      let shapes = [];
+      let totalPieces = row.pieces;
+      let totalWeight = row.weight;
+
+      // If the row has a 'shapes' field with shape information, parse it
+      if (row.shapes && typeof row.shapes === 'string' && row.shapes !== '-') {
+        // Parse the shapes string format: "ShapeName:piecespcs:weightunit; AnotherShape:piecespcs:weightunit"
+        const shapeStrings = row.shapes.split(';');
+
+        for (const shapeStr of shapeStrings) {
+          const trimmed = shapeStr.trim();
+          if (trimmed) {
+            const parts = trimmed.split(':');
+            if (parts.length >= 3) {
+              const name = parts[0];
+              const piecesMatch = parts[1].match(/(\d+(?:\.\d+)?)pcs/);
+              const weightMatch = parts[2].match(/(\d+(?:\.\d+)?)(\w+)/);
+
+              if (piecesMatch && weightMatch) {
+                shapes.push({
+                  name: name,
+                  pieces: parseInt(piecesMatch[1]),
+                  weight: parseFloat(weightMatch[1])
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // If no shapes were parsed from the shapes field, use the old pieces/weight fields
+      if (shapes.length === 0) {
+        shapes = [{ name: "Default", pieces: row.pieces, weight: row.weight }];
+        totalPieces = row.pieces;
+        totalWeight = row.weight;
+      } else {
+        // Calculate totals from shapes
+        totalPieces = shapes.reduce((sum, shape) => sum + shape.pieces, 0);
+        totalWeight = shapes.reduce((sum, shape) => sum + shape.weight, 0);
+      }
+
       await Inventory.create({
         serialNumber: row.serialNumber,
         category: categoryDoc._id,
-        shapes: [{ name: "Default", pieces: row.pieces, weight: row.weight }],
-        totalPieces: row.pieces,
-        availablePieces: row.pieces,
-        totalWeight: row.weight,
-        availableWeight: row.weight,
+        shapes: shapes,
+        totalPieces: totalPieces,
+        availablePieces: totalPieces,
+        totalWeight: totalWeight,
+        availableWeight: totalWeight,
         weightUnit: row.weightUnit || "carat",
         purchaseCode: row.purchaseCode,
         saleCode: row.saleCode,
@@ -189,6 +231,9 @@ export const importInventoryFromExcel = async (req, res) => {
           height: row.height,
           unit: row.dimensionUnit || "mm",
         },
+        certification: row.certification,
+        location: row.location,
+        description: row.description,
       });
 
       inserted++;
@@ -243,14 +288,56 @@ export const confirmInventoryImport = async (req, res) => {
         continue;
       }
 
+      // Process shapes from the imported data
+      let shapes = [];
+      let totalPieces = row.pieces;
+      let totalWeight = row.weight;
+
+      // If the row has a 'shapes' field with shape information, parse it
+      if (row.shapes && typeof row.shapes === 'string' && row.shapes !== '-') {
+        // Parse the shapes string format: "ShapeName:piecespcs:weightunit; AnotherShape:piecespcs:weightunit"
+        const shapeStrings = row.shapes.split(';');
+
+        for (const shapeStr of shapeStrings) {
+          const trimmed = shapeStr.trim();
+          if (trimmed) {
+            const parts = trimmed.split(':');
+            if (parts.length >= 3) {
+              const name = parts[0];
+              const piecesMatch = parts[1].match(/(\d+(?:\.\d+)?)pcs/);
+              const weightMatch = parts[2].match(/(\d+(?:\.\d+)?)(\w+)/);
+
+              if (piecesMatch && weightMatch) {
+                shapes.push({
+                  name: name,
+                  pieces: parseInt(piecesMatch[1]),
+                  weight: parseFloat(weightMatch[1])
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // If no shapes were parsed from the shapes field, use the old pieces/weight fields
+      if (shapes.length === 0) {
+        shapes = [{ name: "Default", pieces: row.pieces, weight: row.weight }];
+        totalPieces = row.pieces;
+        totalWeight = row.weight;
+      } else {
+        // Calculate totals from shapes
+        totalPieces = shapes.reduce((sum, shape) => sum + shape.pieces, 0);
+        totalWeight = shapes.reduce((sum, shape) => sum + shape.weight, 0);
+      }
+
       await Inventory.create({
         serialNumber: row.serialNumber,
         category: categoryDoc._id,
-        shapes: [{ name: "Default", pieces: row.pieces, weight: row.weight }],
-        totalPieces: row.pieces,
-        availablePieces: row.pieces,
-        totalWeight: row.weight,
-        availableWeight: row.weight,
+        shapes: shapes,
+        totalPieces: totalPieces,
+        availablePieces: totalPieces,
+        totalWeight: totalWeight,
+        availableWeight: totalWeight,
         weightUnit: row.weightUnit || "carat",
         purchaseCode: row.purchaseCode,
         saleCode: row.saleCode,
@@ -262,6 +349,9 @@ export const confirmInventoryImport = async (req, res) => {
           height: row.height,
           unit: row.dimensionUnit || "mm",
         },
+        certification: row.certification,
+        location: row.location,
+        description: row.description,
       });
 
       inserted++;
@@ -289,16 +379,33 @@ export const exportInventoryToExcel = async (req, res) => {
     ownerId: req.user.ownerId,
   }).populate("category");
 
-  const data = inventory.map((i) => ({
-    serialNumber: i.serialNumber,
-    category: i.category?.name,
-    pieces: i.totalPieces,
-    weight: i.totalWeight,
-    weightUnit: i.weightUnit,
-    purchaseCode: i.purchaseCode,
-    saleCode: i.saleCode,
-    status: i.status,
-  }));
+  const data = inventory.map((i) => {
+    // Format shapes information for export
+    const shapesInfo = i.shapes && i.shapes.length > 0
+      ? i.shapes.map(shape => `${shape.name}:${shape.pieces}pcs:${shape.weight}${i.weightUnit}`).join('; ')
+      : '-';
+
+    return {
+      serialNumber: i.serialNumber,
+      category: i.category?.name,
+      shapes: shapesInfo,
+      totalPieces: i.totalPieces,
+      availablePieces: i.availablePieces,
+      totalWeight: i.totalWeight,
+      availableWeight: i.availableWeight,
+      weightUnit: i.weightUnit,
+      purchaseCode: i.purchaseCode,
+      saleCode: i.saleCode,
+      status: i.status,
+      dimensions: i.dimensions
+        ? `${i.dimensions.length || ''}x${i.dimensions.width || ''}x${i.dimensions.height || ''}${i.dimensions.unit || 'mm'}`
+        : '-',
+      certification: i.certification || '-',
+      location: i.location || '-',
+      description: i.description || '-',
+      createdAt: i.createdAt ? new Date(i.createdAt).toLocaleDateString() : '-',
+    };
+  });
 
   const file = generateExcel(data);
 
