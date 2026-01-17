@@ -417,22 +417,25 @@ export const createInventoryItem = async (req, res, next) => {
       images,
     } = req.body;
 
-    // ✅ HANDLE SHAPES OR FALLBACK TO SINGLE ENTRY
-    let finalShapes;
+    // ✅ HANDLE SHAPES WITH OPTIONAL FALLBACK TO LEGACY FIELDS
+    let finalShapes = [];
 
     if (shapes && Array.isArray(shapes) && shapes.length > 0) {
       // User provided shapes array
       finalShapes = shapes;
     } else {
-      // Backward compatibility: create single shape from pieces/weight
+      // If no shapes provided, check if legacy fields exist for backward compatibility
       const finalPieces = Number(pieces ?? totalPieces);
       const finalWeight = Number(weight ?? totalWeight);
 
-      finalShapes = [{
-        name: "Default",
-        pieces: finalPieces,
-        weight: finalWeight,
-      }];
+      // Only create default shape if legacy fields have valid values
+      if (!isNaN(finalPieces) && !isNaN(finalWeight) && (finalPieces > 0 || finalWeight > 0)) {
+        finalShapes = [{
+          name: "Default",
+          pieces: finalPieces,
+          weight: finalWeight,
+        }];
+      }
     }
 
     // ✅ CALCULATE TOTALS FROM SHAPES

@@ -80,12 +80,7 @@ const inventorySchema = new mongoose.Schema(
     // 🔹 NEW: Shape-based inventory
     shapes: {
       type: [shapeSchema],
-      validate: {
-        validator: function(arr) {
-          return arr && arr.length > 0;
-        },
-        message: "At least one shape is required"
-      }
+      // Allow empty shapes array for flexibility
     },
 
     // ✅ COMPUTED FIELDS (calculated from shapes array)
@@ -197,12 +192,21 @@ inventorySchema.index({ isDeleted: 1, ownerId: 1 });
 inventorySchema.index({ ownerId: 1, serialNumber: 1 }, { unique: true });
 inventorySchema.index({ ownerId: 1, status: 1 });
 
-// ✅ PRE-SAVE MIDDLEWARE: Calculate totals from shapes
+// ✅ PRE-SAVE MIDDLEWARE: Calculate totals from shapes or fallback to old fields
 inventorySchema.pre("save", function(next) {
   if (this.shapes && this.shapes.length > 0) {
     // Recalculate totals from shapes array
     this.totalPieces = this.shapes.reduce((sum, shape) => sum + (shape.pieces || 0), 0);
     this.totalWeight = this.shapes.reduce((sum, shape) => sum + (shape.weight || 0), 0);
+  } else {
+    // If no shapes provided, use old pieces/weight fields for backward compatibility
+    // This handles the case where users don't add any shapes
+    if (this.pieces !== undefined) {
+      this.totalPieces = Number(this.pieces);
+    }
+    if (this.weight !== undefined) {
+      this.totalWeight = Number(this.weight);
+    }
   }
 
   // Ensure available doesn't exceed total
@@ -212,6 +216,14 @@ inventorySchema.pre("save", function(next) {
 
   if (this.availableWeight > this.totalWeight) {
     return next(new Error("Available weight cannot exceed total weight"));
+  }
+
+  // Ensure available quantities are set if not already
+  if (this.availablePieces === undefined || this.availablePieces === null) {
+    this.availablePieces = this.totalPieces;
+  }
+  if (this.availableWeight === undefined || this.availableWeight === null) {
+    this.availableWeight = this.totalWeight;
   }
 
   // ✅ AUTO-UPDATE STATUS based on availability
