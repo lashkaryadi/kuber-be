@@ -428,6 +428,68 @@ export const updateInventory = async (req, res) => {
       }
     });
 
+    // ==================== POST-UPDATE VALIDATION ====================
+    // Validate the final state after applying updates
+    if (inventory.shapeType === 'single') {
+      if (!inventory.singleShape) {
+        return res.status(400).json({
+          success: false,
+          message: 'Single shape name is required for single shape type'
+        });
+      }
+
+      if (!inventory.totalPieces || !inventory.totalWeight) {
+        return res.status(400).json({
+          success: false,
+          message: 'Total pieces and weight are required for single shape type'
+        });
+      }
+    }
+
+    if (inventory.shapeType === 'mix') {
+      if (!inventory.shapes || inventory.shapes.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'At least one shape is required for mix shape type'
+        });
+      }
+
+      // Validate each shape
+      for (const shape of inventory.shapes) {
+        if (!shape.shape || !shape.pieces || !shape.weight) {
+          return res.status(400).json({
+            success: false,
+            message: 'Each shape must have name, pieces, and weight'
+          });
+        }
+      }
+    }
+
+    // Handle shape-specific data updates
+    if (inventory.shapeType === 'single') {
+      inventory.singleShape = inventory.singleShape?.trim();
+      inventory.totalPieces = parseInt(inventory.totalPieces) || 0;
+      inventory.totalWeight = parseFloat(inventory.totalWeight) || 0;
+      inventory.shapes = [];
+
+      // Register shape in master list
+      if (inventory.singleShape) {
+        await Shape.getOrCreate(inventory.singleShape, ownerId);
+      }
+    } else if (inventory.shapeType === 'mix') {
+      inventory.singleShape = null;
+      inventory.shapes = inventory.shapes.map(s => ({
+        shape: s.shape?.trim(),
+        pieces: parseInt(s.pieces) || 0,
+        weight: parseFloat(s.weight) || 0
+      }));
+
+      // Register all shapes in master list
+      for (const shape of inventory.shapes) {
+        await Shape.getOrCreate(shape.shape, ownerId);
+      }
+    }
+
     // Save (pre-save hook will recalculate totals and price)
     await inventory.save();
     await inventory.populate('category', 'name');
@@ -439,6 +501,16 @@ export const updateInventory = async (req, res) => {
     });
   } catch (error) {
     console.error('Error updating inventory:', error);
+
+    // Handle duplicate serial number (shouldn't happen with auto-gen, but just in case)
+    if (error.code === 11000 && error.keyPattern?.serialNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Serial number already exists. Please try again.',
+        field: 'serialNumber'
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Failed to update inventory item',

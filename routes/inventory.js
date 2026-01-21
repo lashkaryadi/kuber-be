@@ -19,8 +19,8 @@ router.get('/:id', protect, inventoryController.getInventoryById);
 // Create inventory item (admin + staff)
 router.post('/', protect, requireRole(['admin', 'staff']), inventoryController.createInventory);
 
-// Update inventory item (admin only)
-router.put('/:id', protect, requireRole(['admin']), inventoryController.updateInventory);
+// Update inventory item (admin + staff with field restrictions)
+router.put('/:id', protect, requireRole(['admin', 'staff']), inventoryController.updateInventory);
 
 // Delete inventory item (admin only)
 router.delete('/:id', protect, requireRole(['admin']), inventoryController.deleteInventory);
