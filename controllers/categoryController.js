@@ -133,7 +133,11 @@ export const getCategories = async (req, res) => {
 
     res.json({
       success: true,
-      data: categories,
+      data: categories.map(cat => ({
+        id: cat._id.toString(),   // 🔥 IMPORTANT
+        name: cat.name,
+        description: cat.description,
+      })),
       meta: {
         total,
         page: pageNum,

@@ -3,6 +3,7 @@ import Category from '../models/Category.js';
 import Shape from '../models/Shape.js';
 import RecycleBin from '../models/RecycleBin.js';
 import { generateExcel } from '../utils/excel.js';
+import mongoose from 'mongoose';
 
 // ==================== GET ALL INVENTORY ====================
 export const getAllInventory = async (req, res) => {
@@ -61,9 +62,18 @@ export const getAllInventory = async (req, res) => {
       ];
     }
 
-    // Category filter
-    if (category && category !== 'All Categories') {
-      query.category = category;
+    // Category filter - use category code instead of ID
+    if (category && category !== "ALL") {
+      // Find category by code and get its ID
+      const categoryDoc = await Category.findOne({
+        code: category,
+        ownerId,
+        isDeleted: false
+      });
+
+      if (categoryDoc) {
+        query.category = categoryDoc._id;
+      }
     }
 
     // Status filter
@@ -132,14 +142,13 @@ export const getAllInventory = async (req, res) => {
     }));
 
     res.status(200).json({
-      success: true,
       data: transformedItems,
       meta: {
-        total,
         page: pageNum,
         limit: limitNum,
-        pages: Math.ceil(total / limitNum)
-      }
+        total,
+        totalPages: Math.ceil(total / limitNum),
+      },
     });
   } catch (error) {
     console.error('Error fetching inventory:', error);
@@ -578,6 +587,21 @@ export const exportInventoryExcel = async (req, res) => {
       .populate('category', 'name')
       .sort({ createdAt: -1 })
       .lean();
+
+    // Safety check for empty items
+    if (!items.length) {
+      const buffer = generateExcel([]);
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
+      res.setHeader(
+        "Content-Disposition",
+        "attachment; filename=inventory.xlsx"
+      );
+      res.send(buffer);
+      return;
+    }
 
     // Transform to Excel format
     const excelData = items.map(item => ({
