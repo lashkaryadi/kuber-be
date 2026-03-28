@@ -1,10 +1,22 @@
 import Inventory from '../models/Inventory.js';
 import Category from '../models/Category.js';
 import Shape from '../models/Shape.js';
+import Series from '../models/Series.js';
 import RecycleBin from '../models/RecycleBin.js';
 import { generateExcel } from '../utils/excel.js';
 import mongoose from 'mongoose';
 import { parse } from 'csv-parse/sync';
+
+// Cutting style code map (for reference/validation)
+const CUTTING_STYLES = {
+  A: 'Carving',
+  B: 'Beads / Mani / Melon / Pochi',
+  C: 'Cabs',
+  D: 'Drops',
+  E: 'Cut Stone',
+  F: 'Carving Drops',
+  L: 'Leaf'
+};
 
 // ==================== GET ALL INVENTORY ====================
 export const getAllInventory = async (req, res) => {
@@ -14,6 +26,13 @@ export const getAllInventory = async (req, res) => {
       category,
       status,
       shape,
+      cuttingStyle,
+      series,
+      lotType,
+      minWeight,
+      maxWeight,
+      minPieces,
+      maxPieces,
       page = 1,
       limit = 10,
       sortBy = 'createdAt',
@@ -43,9 +62,8 @@ export const getAllInventory = async (req, res) => {
     // Build query
     const query = { ownerId, isDeleted: false };
 
-    // Search
+    // Search across all fields
     if (search) {
-      // Validate search length to prevent ReDoS attacks
       if (typeof search !== 'string' || search.length > 50) {
         return res.status(400).json({
           success: false,
@@ -59,21 +77,27 @@ export const getAllInventory = async (req, res) => {
         { saleCode: new RegExp(search, 'i') },
         { location: new RegExp(search, 'i') },
         { certification: new RegExp(search, 'i') },
-        { description: new RegExp(search, 'i') }
+        { description: new RegExp(search, 'i') },
+        { singleShape: new RegExp(search, 'i') },
+        { 'shapes.shape': new RegExp(search, 'i') },
+        { cuttingStyle: new RegExp(search, 'i') }
       ];
     }
 
     // Category filter - use category code instead of ID
     if (category && category !== "ALL") {
-      // Find category by code and get its ID
-      const categoryDoc = await Category.findOne({
-        code: category,
-        ownerId,
-        isDeleted: false
-      });
-
-      if (categoryDoc) {
-        query.category = categoryDoc._id;
+      // Try as ObjectId first, then as code
+      if (mongoose.Types.ObjectId.isValid(category)) {
+        query.category = category;
+      } else {
+        const categoryDoc = await Category.findOne({
+          code: category,
+          ownerId,
+          isDeleted: false
+        });
+        if (categoryDoc) {
+          query.category = categoryDoc._id;
+        }
       }
     }
 
@@ -89,17 +113,41 @@ export const getAllInventory = async (req, res) => {
     }
 
     // Shape filter
-    if (shape && shape !== 'All Shapes') {
+    if (shape && shape !== 'All Shapes' && shape !== 'ALL') {
       query.$or = [
         { shapeType: 'single', singleShape: shape },
         { shapeType: 'mix', 'shapes.shape': shape }
       ];
     }
 
+    // Cutting style filter
+    if (cuttingStyle && cuttingStyle !== 'ALL') {
+      query.cuttingStyle = cuttingStyle;
+    }
+
+    // Series filter
+    if (series && series !== 'ALL') {
+      query.series = series;
+    }
+
+    // Lot type filter
+    if (lotType && lotType !== 'ALL') {
+      query.shapeType = lotType;
+    }
+
+    // Weight range filter
+    if (minWeight) query.totalWeight = { ...query.totalWeight, $gte: parseFloat(minWeight) };
+    if (maxWeight) query.totalWeight = { ...query.totalWeight, $lte: parseFloat(maxWeight) };
+
+    // Pieces range filter
+    if (minPieces) query.totalPieces = { ...query.totalPieces, $gte: parseInt(minPieces) };
+    if (maxPieces) query.totalPieces = { ...query.totalPieces, $lte: parseInt(maxPieces) };
+
     // Validate allowed sort fields to prevent NoSQL injection
     const allowedSortFields = [
       'createdAt', 'updatedAt', 'serialNumber', 'totalPieces',
-      'totalWeight', 'availablePieces', 'availableWeight', 'status'
+      'totalWeight', 'availablePieces', 'availableWeight', 'status',
+      'cuttingStyle', 'saleCode', 'purchaseCode'
     ];
 
     if (!allowedSortFields.includes(sortBy)) {
@@ -118,7 +166,8 @@ export const getAllInventory = async (req, res) => {
 
     const [items, total] = await Promise.all([
       Inventory.find(query)
-        .populate('category', 'name')
+        .populate('category', 'name code')
+        .populate('series', 'name')
         .sort(sortOptions)
         .skip(skip)
         .limit(limitNum)
@@ -132,7 +181,12 @@ export const getAllInventory = async (req, res) => {
       _id: item._id.toString(),
       category: item.category ? {
         _id: item.category._id.toString(),
-        name: item.category.name
+        name: item.category.name,
+        code: item.category.code
+      } : null,
+      series: item.series ? {
+        _id: item.series._id.toString(),
+        name: item.series.name
       } : null,
       // Add display shapes for convenience
       displayShapes: item.shapeType === 'single'
@@ -171,7 +225,7 @@ export const getInventoryById = async (req, res) => {
       _id: id,
       ownerId,
       isDeleted: false
-    }).populate('category', 'name');
+    }).populate('category', 'name code').populate('series', 'name');
 
     if (!inventory) {
       return res.status(404).json({
@@ -239,7 +293,9 @@ export const createInventory = async (req, res) => {
       location,
       status,
       description,
-      images
+      images,
+      cuttingStyle,
+      series
     } = req.body;
 
     const ownerId = req.user.ownerId;
@@ -252,6 +308,14 @@ export const createInventory = async (req, res) => {
       });
     }
 
+    // Validate cutting style if provided
+    if (cuttingStyle && !['A', 'B', 'C', 'D', 'E', 'F', 'L'].includes(cuttingStyle.toUpperCase())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid cutting style code'
+      });
+    }
+
     if (shapeType === 'single') {
       if (!singleShape) {
         return res.status(400).json({
@@ -260,10 +324,10 @@ export const createInventory = async (req, res) => {
         });
       }
 
-      if (!totalPieces || !totalWeight) {
+      if (!totalWeight) {
         return res.status(400).json({
           success: false,
-          message: 'Total pieces and weight are required for single shape type'
+          message: 'Total weight is required for single shape type'
         });
       }
     }
@@ -278,26 +342,41 @@ export const createInventory = async (req, res) => {
 
       // Validate each shape
       for (const shape of shapes) {
-        if (!shape.shape || !shape.pieces || !shape.weight) {
+        if (!shape.shape || !shape.weight) {
           return res.status(400).json({
             success: false,
-            message: 'Each shape must have name, pieces, and weight'
+            message: 'Each shape must have name and weight'
           });
         }
       }
     }
 
     // ==================== AUTO-GENERATE SERIAL NUMBER ====================
-    const serialNumber = await Inventory.generateSerialNumber(category, ownerId);
+    const serialNumber = await Inventory.generateSerialNumber(category, ownerId, cuttingStyle);
+
+    // ==================== BUILD DIMENSIONS ====================
+    const parsedDimensions = {
+      min: {
+        length: parseFloat(dimensions?.min?.length) || 0,
+        width: parseFloat(dimensions?.min?.width) || 0
+      },
+      max: {
+        length: parseFloat(dimensions?.max?.length) || 0,
+        width: parseFloat(dimensions?.max?.width) || 0
+      },
+      unit: dimensions?.unit || 'mm'
+    };
 
     // ==================== CREATE INVENTORY DATA ====================
     const inventoryData = {
       serialNumber,
       category: category || null,
       shapeType,
+      cuttingStyle: cuttingStyle ? cuttingStyle.toUpperCase() : '',
+      series: series || null,
       purchaseCode: purchaseCode || '',
       saleCode: saleCode || '',
-      dimensions: dimensions || { length: 0, width: 0, height: 0, unit: 'mm' },
+      dimensions: parsedDimensions,
       certification: certification || '',
       location: location || '',
       status: status || 'in_stock',
@@ -320,7 +399,15 @@ export const createInventory = async (req, res) => {
       inventoryData.shapes = shapes.map(s => ({
         shape: s.shape.trim(),
         pieces: parseInt(s.pieces) || 0,
-        weight: parseFloat(s.weight) || 0
+        weight: parseFloat(s.weight) || 0,
+        dimensionMin: {
+          length: parseFloat(s.dimensionMin?.length) || 0,
+          width: parseFloat(s.dimensionMin?.width) || 0
+        },
+        dimensionMax: {
+          length: parseFloat(s.dimensionMax?.length) || 0,
+          width: parseFloat(s.dimensionMax?.width) || 0
+        }
       }));
 
       // Register all shapes in master list
@@ -334,8 +421,9 @@ export const createInventory = async (req, res) => {
     const inventory = new Inventory(inventoryData);
     await inventory.save();
 
-    // Populate category
+    // Populate category and series
     await inventory.populate('category', 'name');
+    await inventory.populate('series', 'name');
 
     res.status(201).json({
       success: true,
@@ -420,7 +508,7 @@ export const updateInventory = async (req, res) => {
       'category', 'shapeType', 'singleShape', 'shapes',
       'totalPieces', 'totalWeight', 'purchaseCode', 'saleCode',
       'dimensions', 'certification', 'location', 'status',
-      'description', 'images'
+      'description', 'images', 'cuttingStyle', 'series'
     ];
 
     allowedUpdates.forEach(field => {
@@ -439,10 +527,10 @@ export const updateInventory = async (req, res) => {
         });
       }
 
-      if (!inventory.totalPieces || !inventory.totalWeight) {
+      if (!inventory.totalWeight) {
         return res.status(400).json({
           success: false,
-          message: 'Total pieces and weight are required for single shape type'
+          message: 'Total weight is required for single shape type'
         });
       }
     }
@@ -457,10 +545,10 @@ export const updateInventory = async (req, res) => {
 
       // Validate each shape
       for (const shape of inventory.shapes) {
-        if (!shape.shape || !shape.pieces || !shape.weight) {
+        if (!shape.shape || !shape.weight) {
           return res.status(400).json({
             success: false,
-            message: 'Each shape must have name, pieces, and weight'
+            message: 'Each shape must have name and weight'
           });
         }
       }
@@ -482,7 +570,15 @@ export const updateInventory = async (req, res) => {
       inventory.shapes = inventory.shapes.map(s => ({
         shape: s.shape?.trim(),
         pieces: parseInt(s.pieces) || 0,
-        weight: parseFloat(s.weight) || 0
+        weight: parseFloat(s.weight) || 0,
+        dimensionMin: {
+          length: parseFloat(s.dimensionMin?.length) || 0,
+          width: parseFloat(s.dimensionMin?.width) || 0
+        },
+        dimensionMax: {
+          length: parseFloat(s.dimensionMax?.length) || 0,
+          width: parseFloat(s.dimensionMax?.width) || 0
+        }
       }));
 
       // Register all shapes in master list
@@ -494,6 +590,7 @@ export const updateInventory = async (req, res) => {
     // Save (pre-save hook will recalculate totals and price)
     await inventory.save();
     await inventory.populate('category', 'name');
+    await inventory.populate('series', 'name');
 
     res.status(200).json({
       success: true,
@@ -657,7 +754,8 @@ export const exportInventoryExcel = async (req, res) => {
     }
 
     const items = await Inventory.find(query)
-      .populate('category', 'name')
+      .populate('category', 'name code')
+      .populate('series', 'name')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -680,6 +778,8 @@ export const exportInventoryExcel = async (req, res) => {
     const excelData = items.map(item => ({
       'Serial Number': item.serialNumber,
       'Category': item.category?.name || 'N/A',
+      'Cutting Style': item.cuttingStyle || 'N/A',
+      'Series': item.series?.name || 'N/A',
       'Shape Type': item.shapeType,
       'Shapes': item.shapeType === 'single'
         ? item.singleShape
@@ -691,7 +791,9 @@ export const exportInventoryExcel = async (req, res) => {
       'Purchase Code': item.purchaseCode,
       'Sale Code': item.saleCode,
       'Total Price': item.totalPrice,
-      'Dimensions': `${item.dimensions?.length || 0} x ${item.dimensions?.width || 0} x ${item.dimensions?.height || 0} ${item.dimensions?.unit || 'mm'}`,
+      'Dim Min': `${item.dimensions?.min?.length || 0} x ${item.dimensions?.min?.width || 0}`,
+      'Dim Max': `${item.dimensions?.max?.length || 0} x ${item.dimensions?.max?.width || 0}`,
+      'Dim Unit': item.dimensions?.unit || 'mm',
       'Certification': item.certification,
       'Location': item.location,
       'Status': item.status,
@@ -846,5 +948,206 @@ export const importInventoryCSV = async (req, res) => {
       success: false,
       message: 'Failed to import CSV: ' + error.message
     });
+  }
+};
+
+// ==================== MERGE PACKETS ====================
+export const mergePackets = async (req, res) => {
+  try {
+    const { sourceId, targetId } = req.body;
+    const ownerId = req.user.ownerId;
+
+    if (!sourceId || !targetId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both source and target packet IDs are required'
+      });
+    }
+
+    if (sourceId === targetId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot merge a packet into itself'
+      });
+    }
+
+    // Fetch both packets
+    const [source, target] = await Promise.all([
+      Inventory.findOne({ _id: sourceId, ownerId, isDeleted: false }).populate('category', 'name'),
+      Inventory.findOne({ _id: targetId, ownerId, isDeleted: false }).populate('category', 'name')
+    ]);
+
+    if (!source) {
+      return res.status(404).json({ success: false, message: 'Source packet not found' });
+    }
+    if (!target) {
+      return res.status(404).json({ success: false, message: 'Target packet not found' });
+    }
+
+    // Validate same category
+    const sourceCatId = source.category?._id?.toString() || '';
+    const targetCatId = target.category?._id?.toString() || '';
+    if (sourceCatId !== targetCatId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Can only merge packets of the same category'
+      });
+    }
+
+    // ==================== MERGE LOGIC ====================
+    // Add source weight/pieces to target
+    target.totalPieces += source.totalPieces;
+    target.totalWeight += source.totalWeight;
+    target.availablePieces += source.availablePieces;
+    target.availableWeight += source.availableWeight;
+
+    // Merge shapes
+    if (source.shapeType === 'mix' || target.shapeType === 'mix') {
+      // Convert to mix if either is mix
+      target.shapeType = 'mix';
+
+      // Collect all shapes
+      let allShapes = [...(target.shapes || [])];
+
+      if (source.shapeType === 'single' && source.singleShape) {
+        allShapes.push({
+          shape: source.singleShape,
+          pieces: source.totalPieces,
+          weight: source.totalWeight,
+          dimensionMin: source.dimensions?.min || { length: 0, width: 0 },
+          dimensionMax: source.dimensions?.max || { length: 0, width: 0 }
+        });
+      } else if (source.shapeType === 'mix') {
+        allShapes = allShapes.concat(source.shapes || []);
+      }
+
+      // If target was single, convert it
+      if (target.singleShape && target.shapes.length === 0) {
+        const existingTargetPieces = target.totalPieces - source.totalPieces;
+        const existingTargetWeight = target.totalWeight - source.totalWeight;
+        allShapes.unshift({
+          shape: target.singleShape,
+          pieces: existingTargetPieces,
+          weight: existingTargetWeight,
+          dimensionMin: target.dimensions?.min || { length: 0, width: 0 },
+          dimensionMax: target.dimensions?.max || { length: 0, width: 0 }
+        });
+        target.singleShape = null;
+      }
+
+      // Consolidate shapes with same name
+      const shapeMap = {};
+      for (const s of allShapes) {
+        if (shapeMap[s.shape]) {
+          shapeMap[s.shape].pieces += s.pieces;
+          shapeMap[s.shape].weight += s.weight;
+        } else {
+          shapeMap[s.shape] = { ...s };
+        }
+      }
+      target.shapes = Object.values(shapeMap);
+
+    } else {
+      // Both are single shape — if same shape, just add quantities
+      // If different shapes, convert to mix
+      if (source.singleShape === target.singleShape) {
+        // Same shape, keep as single
+      } else {
+        target.shapeType = 'mix';
+        const existingTargetPieces = target.totalPieces - source.totalPieces;
+        const existingTargetWeight = target.totalWeight - source.totalWeight;
+        target.shapes = [
+          {
+            shape: target.singleShape,
+            pieces: existingTargetPieces,
+            weight: existingTargetWeight,
+            dimensionMin: target.dimensions?.min || { length: 0, width: 0 },
+            dimensionMax: target.dimensions?.max || { length: 0, width: 0 }
+          },
+          {
+            shape: source.singleShape,
+            pieces: source.totalPieces,
+            weight: source.totalWeight,
+            dimensionMin: source.dimensions?.min || { length: 0, width: 0 },
+            dimensionMax: source.dimensions?.max || { length: 0, width: 0 }
+          }
+        ];
+        target.singleShape = null;
+      }
+    }
+
+    // Update status
+    if (target.availablePieces > 0 || target.availableWeight > 0) {
+      target.status = target.availablePieces < target.totalPieces ? 'partially_sold' : 'in_stock';
+    }
+
+    await target.save();
+
+    // Move source to recycle bin and delete
+    await RecycleBin.create({
+      entityType: 'inventory',
+      entityId: source._id,
+      entityData: { ...source.toObject(), mergedInto: target._id },
+      deletedBy: { username: req.user.username, email: req.user.email },
+      ownerId,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    });
+
+    await Inventory.findByIdAndDelete(source._id);
+
+    // Populate and return target
+    await target.populate('category', 'name code');
+    await target.populate('series', 'name');
+
+    res.status(200).json({
+      success: true,
+      message: `Packet ${source.serialNumber} merged into ${target.serialNumber}`,
+      data: target
+    });
+  } catch (error) {
+    console.error('Error merging packets:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to merge packets',
+      error: error.message
+    });
+  }
+};
+
+// ==================== GET MERGE CANDIDATES ====================
+// Returns packets of the same category for merge selection
+export const getMergeCandidates = async (req, res) => {
+  try {
+    const { sourceId } = req.params;
+    const ownerId = req.user.ownerId;
+
+    const source = await Inventory.findOne({ _id: sourceId, ownerId, isDeleted: false });
+    if (!source) {
+      return res.status(404).json({ success: false, message: 'Source packet not found' });
+    }
+
+    const query = {
+      ownerId,
+      isDeleted: false,
+      _id: { $ne: sourceId },
+      status: { $in: ['in_stock', 'partially_sold', 'pending'] }
+    };
+
+    // Only same category
+    if (source.category) {
+      query.category = source.category;
+    }
+
+    const candidates = await Inventory.find(query)
+      .populate('category', 'name code')
+      .select('serialNumber category totalPieces totalWeight availablePieces availableWeight shapeType singleShape shapes status')
+      .sort({ serialNumber: 1 })
+      .limit(100)
+      .lean();
+
+    res.json({ success: true, data: candidates });
+  } catch (error) {
+    console.error('Error fetching merge candidates:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch merge candidates' });
   }
 };

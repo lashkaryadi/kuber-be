@@ -29,6 +29,10 @@ router.get('/export/excel', protect, inventoryController.exportInventoryExcel);
 // ==================== CSV IMPORT ====================
 router.post('/import/csv', protect, requireRole(['admin', 'staff']), csvUpload.single('file'), inventoryController.importInventoryCSV);
 
+// ==================== MERGE ROUTES ====================
+router.post('/merge', protect, requireRole(['admin']), inventoryController.mergePackets);
+router.get('/merge-candidates/:sourceId', protect, inventoryController.getMergeCandidates);
+
 // ==================== INVENTORY ROUTES ====================
 // Get all inventory (with filters, search, pagination)
 router.get('/', protect, inventoryController.getAllInventory);

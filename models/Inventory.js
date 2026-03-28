@@ -18,6 +18,15 @@ const shapeSchema = new mongoose.Schema({
     required: true,
     min: 0,
     default: 0
+  },
+  // Per-shape dimension ranges (used in mix lots)
+  dimensionMin: {
+    length: { type: Number, min: 0, default: 0 },
+    width: { type: Number, min: 0, default: 0 }
+  },
+  dimensionMax: {
+    length: { type: Number, min: 0, default: 0 },
+    width: { type: Number, min: 0, default: 0 }
   }
 }, { _id: false });
 
@@ -61,7 +70,7 @@ const inventorySchema = new mongoose.Schema({
   // These are calculated from shapes or set directly for single items
   totalPieces: {
     type: Number,
-    required: true,
+    required: false,
     min: 0,
     default: 0
   },
@@ -88,6 +97,23 @@ const inventorySchema = new mongoose.Schema({
     default: 0
   },
 
+  // ==================== CUTTING STYLE ====================
+  cuttingStyle: {
+    type: String,
+    enum: ['A', 'B', 'C', 'D', 'E', 'F', 'L', ''],
+    default: '',
+    trim: true,
+    uppercase: true
+  },
+
+  // ==================== SERIES ====================
+  series: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Series",
+    default: null,
+    index: true
+  },
+
   // ==================== CODES & PRICING ====================
   // Codes can be numeric (price/carat) or string (confidential)
   purchaseCode: {
@@ -110,21 +136,17 @@ const inventorySchema = new mongoose.Schema({
   },
 
   // ==================== PHYSICAL ATTRIBUTES ====================
+  // Dimension ranges: min and max length x width (no height)
+  // For single shape lot: one global min/max
+  // For mix shape lot: per-shape min/max stored in shapes array
   dimensions: {
-    length: {
-      type: Number,
-      min: 0,
-      default: 0
+    min: {
+      length: { type: Number, min: 0, default: 0 },
+      width: { type: Number, min: 0, default: 0 }
     },
-    width: {
-      type: Number,
-      min: 0,
-      default: 0
-    },
-    height: {
-      type: Number,
-      min: 0,
-      default: 0
+    max: {
+      length: { type: Number, min: 0, default: 0 },
+      width: { type: Number, min: 0, default: 0 }
     },
     unit: {
       type: String,
@@ -335,40 +357,26 @@ inventorySchema.statics.getAllUniqueShapes = async function(ownerId) {
 };
 
 // Generate next serial number
-inventorySchema.statics.generateSerialNumber = async function(categoryId, ownerId) {
-  if (!categoryId) {
-    // No category - use generic prefix
-    // Include deleted items so serial numbers are never reused
-    const regex = /^GEN\d{3}$/;
-    const lastItem = await this.findOne({
-      ownerId,
-      serialNumber: regex
-    }).sort({ serialNumber: -1 });
-
-    let nextNumber = 1;
-    if (lastItem) {
-      const currentNumber = parseInt(lastItem.serialNumber.replace('GEN', ''));
-      nextNumber = currentNumber + 1;
-    }
-    return `GEN${String(nextNumber).padStart(3, '0')}`;
-  }
-
-  // Lazy-load Category to avoid circular import issues
+// Format: #[CategoryCode][CuttingStyleCode][4-digit sequence]
+// e.g. #EA0001 (Emerald, Carving, item 1)
+inventorySchema.statics.generateSerialNumber = async function(categoryId, ownerId, cuttingStyle) {
   const Category = mongoose.model('Category');
-  const category = await Category.findById(categoryId);
 
-  if (!category) {
-    throw new Error('Category not found');
+  let categoryCode = 'GEN';
+  if (categoryId) {
+    const category = await Category.findById(categoryId);
+    if (!category) {
+      throw new Error('Category not found');
+    }
+    categoryCode = category.code || category.name.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
   }
 
-  // Generate prefix from category name (first 2-3 letters, uppercase)
-  const prefix = category.name
-    .replace(/[^a-zA-Z]/g, '')
-    .substring(0, 3)
-    .toUpperCase();
+  const styleCode = cuttingStyle || '';
+  const prefix = `#${categoryCode}${styleCode}`;
 
-  // Find highest number for this prefix (include deleted items so numbers are never reused)
-  const regex = new RegExp(`^${prefix}\\d{3}$`);
+  // Find highest sequence number for this prefix (include deleted items so serial numbers are never reused)
+  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`^${escapedPrefix}\\d+$`);
   const lastItem = await this.findOne({
     ownerId,
     serialNumber: regex
@@ -376,11 +384,15 @@ inventorySchema.statics.generateSerialNumber = async function(categoryId, ownerI
 
   let nextNumber = 1;
   if (lastItem) {
-    const currentNumber = parseInt(lastItem.serialNumber.replace(prefix, ''));
-    nextNumber = currentNumber + 1;
+    const numStr = lastItem.serialNumber.replace(prefix, '');
+    const currentNumber = parseInt(numStr);
+    if (!isNaN(currentNumber)) {
+      nextNumber = currentNumber + 1;
+    }
   }
 
-  return `${prefix}${String(nextNumber).padStart(3, '0')}`;
+  // Always use 4-digit sequence for consistency
+  return `${prefix}${String(nextNumber).padStart(4, '0')}`;
 };
 
 

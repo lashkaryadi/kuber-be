@@ -38,11 +38,31 @@ import { Resend } from "resend";
 import dotenv from "dotenv";
 dotenv.config();
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let resend = null;
+
+function getResendClient() {
+  if (!resend) {
+    if (!process.env.RESEND_API_KEY) {
+      console.warn("⚠️  RESEND_API_KEY not set — emails will be logged to console only");
+      return null;
+    }
+    resend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return resend;
+}
 
 export async function sendEmail({ to, subject, html, text }) {
   try {
-    await resend.emails.send({
+    const client = getResendClient();
+
+    if (!client) {
+      // Fallback: log email to console when no API key is configured
+      console.log(`📧 [DEV EMAIL] To: ${to} | Subject: ${subject}`);
+      if (text) console.log(`   Body: ${text}`);
+      return;
+    }
+
+    await client.emails.send({
       from: "onboarding@resend.dev", // temporary domain
       to,
       subject,
